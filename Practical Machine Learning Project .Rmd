@@ -1,0 +1,156 @@
+---
+title: "Exercise Activity Prediction Report"
+author: "P.Y.Fong"
+date: "01/03/2021"
+output:
+  html_document:
+    fig_width: 10
+    fig_height: 10
+---
+```{r setup, include=FALSE}
+library (knitr)
+opts_chunk$set(cache =T,
+               echo = T,
+               message=F,
+               warning=F)
+```
+## 1.0    Executive Summary  
+The objective of this project was to build a model to predict the manner which participants performed a weight lifting exercise using data from from the Human Activity Recognition website <http://groupware.les.inf.puc-rio.br/har>  
+
+Data was collected from accelerometers on the belt, forearm, arm, and dumbbell of 6 participants, in the weight lifting exercise.  
+
+The model developed in this report was based on the Random Forest Model, cross validated 5 fold and when tested with a validation data set, produced an accuracy of 99.76%, 99.7% kappa.  
+Out of Sample Error was estimated at 0.24%.
+
+The results when used to predict on the test data set was:  
+ B A B A A E D B A A B C B A E E A B B B
+
+## 2.0    Data Preprocessing.
+### 2.1   Libraries.
+```{r libraries}
+library(lattice)
+library(ggplot2)
+library(caret)
+library(data.table)
+library(dplyr)
+library(randomForest)
+```
+
+### 2.2  Data Download.
+```{r Download}
+trainUrl <-"https://d396qusza40orc.cloudfront.net/predmachlearn/pml-training.csv"
+testUrl <- "https://d396qusza40orc.cloudfront.net/predmachlearn/pml-testing.csv"
+trainFile <- "./data/pml-training.csv"
+testFile <- "./data/pml-testing.csv"
+
+if (!file.exists("./data")) {dir.create("./data")}
+if (!file.exists(trainFile)) {download.file(trainUrl, destfile=trainFile, method="curl")}
+if (!file.exists(testFile)) {download.file(testUrl, destfile=testFile, method="curl")}
+
+train <- fread("./data/pml-training.csv")
+test <- fread("./data/pml-testing.csv")
+```
+
+### 2.3  Data Exploration.
+```{r Explore}
+str(train,list.len = 20) # train data structure. (Truncated in report)
+trainlowvar <- length(nearZeroVar(train))
+testlowvar <- length(nearZeroVar(test))
+```
+
+**Observations.**
+
+*   train set contained `r dim(train)[1]` observations of `r dim(train)[2]` variables. There were also `r trainlowvar` low variance variables and  `r sum(is.na(train))` missing values.
+
+*   test set contained `r dim(test)[1]` observations of `r dim(test)[2]` variables. There were also `r testlowvar` low variance variables and `r  sum(is.na(test))` missing values.
+
+*   The first 7 columns of both sets were identifiers and were unnecessary as predictors.
+
+*   The response variable "classe" is the prediction outcome and was unique in train.
+
+*   The response variable "problem_id" was unique in test.
+
+### 2.4   Data Cleaning.
+
+1.    Eliminated identifiers, low variance & all NA values variables from test.
+
+2.    Eliminated all unnecessary variables from train using cleaned test variables as reference.
+
+```{r Cleaning}
+test <- test %>% select (-(1:6)) %>%
+  select (- nearZeroVar(test)) %>%
+  select_if(~sum(!is.na(.)) > 0)
+
+train <- train %>% select (names(test)[1:24],classe)
+```
+The cleaned data sets now contained;
+
+*   test    - `r dim(test)[1]` observations of `r dim(test)[2]` variables. "problem_id" is unique.
+
+*   train    - `r dim(train)[1]` observations of `r dim(train)[2]` variables. "classe" is unique.
+
+### 2.5   Partitioning a Validation Set.
+Split train into trainf (70%) and valid (30%). 
+The valid data set was to be used to conduct cross validation.
+
+```{r Validation}
+set.seed(2468) # reproducibility
+part <- createDataPartition(train$classe, p=0.70, list=F)
+trainf <- train[part,]
+valid <- train[-part,]
+```
+The training data sets now contained;
+
+*   trainf   - `r dim(trainf)[1]` observations of `r dim(trainf)[2]` variables.
+
+*   valid    - `r dim(valid)[1]` observations of `r dim(valid)[2]` variables.
+
+*Refer Visualization 4.1* - It was noted that many of the variables were either positively or negatively correlated with each other.
+
+## 3.0   Prediction Model.
+The Random Forest algorithm was selected because it automatically selects important variables and is robust to correlated variables & outliers.  
+5 fold Cross validation was applied.
+```{r Model}
+rfcont <- trainControl(method="cv", 5)
+rfmodel <- train(classe ~ ., data=trainf, method="rf", trControl=rfcont, ntree=250)
+rfmodel
+```
+*Refer Visualization 4.2* 
+
+### 3.1   Prediction Against Validation Set.
+```{r validation}
+rfpred <- predict(rfmodel, valid)
+cf <- confusionMatrix(as.factor(valid$classe), rfpred)
+cf
+```
+
+### 3.2   Accuracy and Out of Sample Error.
+```{r Accuracy}
+accuracy <- cf$overall['Accuracy']
+kappa <- cf$overall['Kappa']
+oose <- 1 - accuracy
+```
+The RF model Accuracy was `r round(100*accuracy, 2)`%  
+Kappa was `r round(100*kappa, 2)`%.  
+and the Out of Sample Error was `r round(100*oose, 2)`%.
+
+These values were found to be acceptable.
+
+### 3.3   Predicting on Test Data Set.
+```{r Testing}
+testpred <- predict(rfmodel, test)
+testpred
+```
+
+## 4.0    Visualizations.
+### 4.1   Correlation Matrix.
+```{r Correlation Matrix}
+Matrixplot <- cor(train[, -"classe"])
+corrplot(Matrixplot, method="color")
+```
+
+### 4.2   Tree Diagram.
+```{r Tree Diagram}
+treemodel <- rpart(classe ~ ., data=train, method="class")
+prp(treemodel)
+```
